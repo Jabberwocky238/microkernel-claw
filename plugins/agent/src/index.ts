@@ -16,6 +16,7 @@ import type {
   AgentRunResult,
   AgentToolCallRequest,
 } from "./types.js";
+import { CtrlCommandFilter } from "./ctrl-command-filter.js";
 import type { OpenAICompatibleProviderOptions } from "./providers/openai-compatible-provider-types.js";
 import { AgentSessionStore } from "./session-store.js";
 import { DEFAULT_AGENT_ALLOWED_CAPABILITIES } from "./capability-use.js";
@@ -33,6 +34,7 @@ const SUBAGENT_MANAGER_STATE_KEY = "subagentManager";
 export default class AgentPlugin extends Plugin implements AgentRunner {
   private provider?: AgentProvider;
   private lastProgressMessageBySession = new Map<string, string>();
+  private readonly ctrlCommandFilter = new CtrlCommandFilter();
 
   constructor() {
     super({
@@ -55,7 +57,13 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
   }
 
   public async run(request: AgentRunRequest): Promise<AgentRunResult> {
-    const messages = this.normalizeMessages(request.messages);
+    const messages = request.messages.filter(
+      (message): message is AgentMessage =>
+        typeof message === "object" &&
+        message !== null &&
+        typeof message.role === "string" &&
+        (typeof message.content === "string" || message.content === null),
+    );
 
     if (messages.length === 0) {
       throw new TypeError("messages must contain at least one valid message.");
@@ -98,7 +106,22 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       throw new TypeError("capabilityId must be a non-empty string.");
     }
 
-    const normalizedInput = this.normalizeCapabilityInput(input);
+    let normalizedInput: unknown = input ?? {};
+
+    if (typeof input === "string") {
+      const trimmed = input.trim();
+
+      if (trimmed.length === 0) {
+        normalizedInput = {};
+      } else {
+        try {
+          normalizedInput = JSON.parse(trimmed) as unknown;
+        } catch {
+          normalizedInput = input;
+        }
+      }
+    }
+
     const result = await this.invoker().invoke(
       capabilityId,
       normalizedInput,
@@ -135,6 +158,20 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
 
     const sessions = this.getSessionStore();
     const key = sessionId.trim();
+    const ctrlCommandResult = await this.ctrlCommandFilter.handle(input, {
+      sessionId: key,
+      sessionStore: sessions,
+    });
+
+    if (ctrlCommandResult.handled) {
+      this.lastProgressMessageBySession.delete(key);
+      return {
+        finalContent: ctrlCommandResult.message ?? "",
+        toolCalls: [],
+        finishReason: "stop",
+      };
+    }
+
     const session = await sessions.getOrCreate(key);
     const originalMessageCount = session.messages.length;
     const baseMessages = session.getHistory();
@@ -185,8 +222,14 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
   }
 
   public override capabilities(): CapabilityProvider[] {
+    const manager = this.state[SUBAGENT_MANAGER_STATE_KEY];
+
+    if (!(manager instanceof SubagentManager)) {
+      throw new Error("Subagent manager is not initialized.");
+    }
+
     return [
-      new AgentSpawnCapabilityProvider(this, this.getSubagentManager()),
+      new AgentSpawnCapabilityProvider(this, manager),
     ];
   }
 
@@ -248,7 +291,43 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
   }
 
   public async onChannelMessage(event: PluginEvent): Promise<void> {
-    const payload = this.toChannelMessage(event.payload);
+    const rawPayload = event.payload;
+    let payload: AgentChannelMessage | null = null;
+
+    if (typeof rawPayload === "object" && rawPayload !== null && !Array.isArray(rawPayload)) {
+      const record = rawPayload as Record<string, unknown>;
+      const channel = record.channel;
+      const senderId = record.senderId;
+      const chatId = record.chatId;
+      const content = record.content;
+      const timestamp = record.timestamp;
+      const media = record.media;
+      const metadata = record.metadata;
+
+      if (
+        (channel === "feishu" || channel === "whatsapp" || channel === "wecom") &&
+        typeof senderId === "string" &&
+        typeof chatId === "string" &&
+        typeof content === "string" &&
+        typeof timestamp === "string" &&
+        Array.isArray(media) &&
+        media.every((item) => typeof item === "string") &&
+        typeof metadata === "object" &&
+        metadata !== null &&
+        !Array.isArray(metadata)
+      ) {
+        payload = {
+          channel,
+          senderId,
+          chatId,
+          content,
+          timestamp,
+          media: [...media],
+          metadata: metadata as Record<string, unknown>,
+        };
+      }
+    }
+
     if (!payload) {
       return;
     }
@@ -265,14 +344,59 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       return;
     }
 
-    const route = this.resolveChannelRoute(payload.channel);
+    let route: { sessionPrefix: string; replyCapabilityId: string } | null = null;
+
+    if (payload.channel === "whatsapp" && this.whatsAppAgentEnabled()) {
+      route = {
+        sessionPrefix: "whatsapp",
+        replyCapabilityId: "whatsapp.send_message",
+      };
+    } else if (payload.channel === "wecom" && this.wecomAgentEnabled()) {
+      route = {
+        sessionPrefix: "wecom",
+        replyCapabilityId: "wecom.send_message",
+      };
+    }
+
     if (!route) {
+      return;
+    }
+    const sessionId = `${route.sessionPrefix}:${payload.chatId}`;
+
+    const ctrlCommandResult = await this.ctrlCommandFilter.handle(payload.content, {
+      sessionId,
+      sessionStore: this.getSessionStore(),
+    });
+
+    if (ctrlCommandResult.handled) {
+      this.lastProgressMessageBySession.delete(sessionId);
+      if (ctrlCommandResult.message?.trim()) {
+        await this.invokeCapability(route.replyCapabilityId, {
+          to: payload.chatId,
+          text: ctrlCommandResult.message,
+        });
+      }
       return;
     }
 
     const result = await this.runSession(
-      `${route.sessionPrefix}:${payload.chatId}`,
-      this.formatChannelInput(payload),
+      sessionId,
+      (() => {
+        const parts: string[] = [];
+
+        if (payload.content.trim()) {
+          parts.push(payload.content);
+        }
+
+        if (payload.media.length > 0) {
+          parts.push("Media files:");
+          for (const mediaPath of payload.media) {
+            parts.push(`- ${mediaPath}`);
+          }
+        }
+
+        return parts.join("\n").trim();
+      })(),
       undefined,
       undefined,
       async (message) => {
@@ -296,7 +420,10 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     toolCall: AgentToolCallRequest,
     options?: AgentExecutionOptions,
   ): Promise<string> {
-    const deniedReason = this.getCapabilityDenyReason(capabilityId, options?.isolation);
+    const deniedReason =
+      options?.isolation && !options.isolation.allowedCapabilityIds.includes(capabilityId)
+        ? `Capability '${capabilityId}' is blocked by subagent policy.`
+        : null;
 
     if (deniedReason) {
       this.logger().warn("agent tool call denied", {
@@ -322,7 +449,24 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       toolCall.arguments,
       {
         callerPluginName: this.name,
-        metadata: this.buildInvocationMetadata(options),
+        metadata: (() => {
+          const metadata: Record<string, unknown> = {};
+
+          if (options?.sessionId) {
+            metadata.sessionId = options.sessionId;
+          }
+
+          if (options?.isolation) {
+            metadata.actorType = options.isolation.actorType;
+            metadata.subagentDepth = options.isolation.depth;
+            metadata.parentSessionId = options.isolation.parentSessionId;
+            metadata.subagentSessionId = options.isolation.sessionId;
+            metadata.subagentTaskId = options.isolation.taskId;
+            metadata.allowedCapabilityIds = [...options.isolation.allowedCapabilityIds];
+          }
+
+          return Object.keys(metadata).length > 0 ? metadata : undefined;
+        })(),
       },
     );
 
@@ -337,7 +481,12 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       return `Error: ${result.error ?? `Capability invocation failed: ${capabilityId}`}`;
     }
 
-    const stringified = this.stringifyToolResult(result.value);
+    const stringified =
+      result.value === undefined
+        ? "OK"
+        : typeof result.value === "string"
+          ? result.value
+          : JSON.stringify(result.value, null, 2);
     this.logger().info("agent capability invocation completed", {
       capabilityId,
       toolCallId: toolCall.id,
@@ -365,7 +514,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     );
 
     return visibleDescriptors.map((descriptor) => {
-      const toolName = this.toProviderToolName(descriptor.id);
+      const toolName = descriptor.id.replace(/[^a-zA-Z0-9_-]/g, "_");
 
       return {
         capabilityId: descriptor.id,
@@ -440,7 +589,22 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
         finalContentPreview: (result.finalContent ?? "").slice(0, 240),
         toolCallCount: result.toolCalls.length,
       });
-      await this.emitProgressMessage(options, result.finalContent ?? "");
+      if (typeof options?.onProgressMessage === "function") {
+        const trimmed = (result.finalContent ?? "").trim();
+
+        if (trimmed.length > 0) {
+          if (options.sessionId) {
+            const lastMessage = this.lastProgressMessageBySession.get(options.sessionId);
+
+            if (lastMessage !== trimmed) {
+              this.lastProgressMessageBySession.set(options.sessionId, trimmed);
+              await options.onProgressMessage(trimmed);
+            }
+          } else {
+            await options.onProgressMessage(trimmed);
+          }
+        }
+      }
 
       if (result.toolCalls.length === 0) {
         activeMessages.push({
@@ -508,43 +672,6 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     };
   }
 
-  private normalizeMessages(messages: AgentMessage[]): AgentMessage[] {
-    return messages.filter(
-      (message): message is AgentMessage =>
-        typeof message === "object" &&
-        message !== null &&
-        typeof message.role === "string" &&
-        (typeof message.content === "string" || message.content === null),
-    );
-  }
-
-  private async emitProgressMessage(
-    options: AgentExecutionOptions | undefined,
-    message: string,
-  ): Promise<void> {
-    if (typeof options?.onProgressMessage !== "function") {
-      return;
-    }
-
-    const trimmed = message.trim();
-
-    if (trimmed.length === 0) {
-      return;
-    }
-
-    if (options.sessionId) {
-      const lastMessage = this.lastProgressMessageBySession.get(options.sessionId);
-
-      if (lastMessage === trimmed) {
-        return;
-      }
-
-      this.lastProgressMessageBySession.set(options.sessionId, trimmed);
-    }
-
-    await options.onProgressMessage(trimmed);
-  }
-
   private getSessionStore(): AgentSessionStore {
     const store = this.state[SESSION_STORE_STATE_KEY];
 
@@ -553,70 +680,6 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     }
 
     return store;
-  }
-
-  private getSubagentManager(): SubagentManager {
-    const manager = this.state[SUBAGENT_MANAGER_STATE_KEY];
-
-    if (!(manager instanceof SubagentManager)) {
-      throw new Error("Subagent manager is not initialized.");
-    }
-
-    return manager;
-  }
-
-  private buildInvocationMetadata(
-    options?: AgentExecutionOptions,
-  ): Record<string, unknown> | undefined {
-    const metadata: Record<string, unknown> = {};
-
-    if (options?.sessionId) {
-      metadata.sessionId = options.sessionId;
-    }
-
-    if (options?.isolation) {
-      metadata.actorType = options.isolation.actorType;
-      metadata.subagentDepth = options.isolation.depth;
-      metadata.parentSessionId = options.isolation.parentSessionId;
-      metadata.subagentSessionId = options.isolation.sessionId;
-      metadata.subagentTaskId = options.isolation.taskId;
-      metadata.allowedCapabilityIds = [...options.isolation.allowedCapabilityIds];
-    }
-
-    return Object.keys(metadata).length > 0 ? metadata : undefined;
-  }
-
-  private getCapabilityDenyReason(
-    capabilityId: string,
-    isolation?: SubagentIsolationContext,
-  ): string | null {
-    if (!isolation) {
-      return null;
-    }
-
-    if (!isolation.allowedCapabilityIds.includes(capabilityId)) {
-      return `Capability '${capabilityId}' is blocked by subagent policy.`;
-    }
-
-    return null;
-  }
-
-  private normalizeCapabilityInput(input: unknown): unknown {
-    if (typeof input !== "string") {
-      return input ?? {};
-    }
-
-    const trimmed = input.trim();
-
-    if (trimmed.length === 0) {
-      return {};
-    }
-
-    try {
-      return JSON.parse(trimmed) as unknown;
-    } catch {
-      return input;
-    }
   }
 
   private getProviderOptions(): OpenAICompatibleProviderOptions {
@@ -641,46 +704,42 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       apiKey,
       apiBase,
       defaultModel,
-      extraHeaders: this.parseExtraHeaders(rawExtraHeaders),
+      extraHeaders: (() => {
+        if (!rawExtraHeaders || rawExtraHeaders.trim().length === 0) {
+          return undefined;
+        }
+
+        let parsed: unknown;
+
+        try {
+          parsed = JSON.parse(rawExtraHeaders);
+        } catch {
+          throw new TypeError(
+            `AGENT_PROVIDER_EXTRA_HEADERS must be a valid JSON object string.`,
+          );
+        }
+
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          throw new TypeError(
+            `AGENT_PROVIDER_EXTRA_HEADERS must be a valid JSON object string.`,
+          );
+        }
+
+        const headers: Record<string, string> = {};
+
+        for (const [key, value] of Object.entries(parsed)) {
+          if (typeof value !== "string") {
+            throw new TypeError(
+              `AGENT_PROVIDER_EXTRA_HEADERS values must all be strings.`,
+            );
+          }
+
+          headers[key] = value;
+        }
+
+        return headers;
+      })(),
     };
-  }
-
-  private parseExtraHeaders(
-    rawExtraHeaders: string | undefined,
-  ): Record<string, string> | undefined {
-    if (!rawExtraHeaders || rawExtraHeaders.trim().length === 0) {
-      return undefined;
-    }
-
-    let parsed: unknown;
-
-    try {
-      parsed = JSON.parse(rawExtraHeaders);
-    } catch {
-      throw new TypeError(
-        `AGENT_PROVIDER_EXTRA_HEADERS must be a valid JSON object string.`,
-      );
-    }
-
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      throw new TypeError(
-        `AGENT_PROVIDER_EXTRA_HEADERS must be a valid JSON object string.`,
-      );
-    }
-
-    const headers: Record<string, string> = {};
-
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value !== "string") {
-        throw new TypeError(
-          `AGENT_PROVIDER_EXTRA_HEADERS values must all be strings.`,
-        );
-      }
-
-      headers[key] = value;
-    }
-
-    return headers;
   }
 
   private whatsAppAgentEnabled(): boolean {
@@ -691,89 +750,6 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     return process.env.WECOM_AGENT_ENABLED === "true";
   }
 
-  private resolveChannelRoute(
-    channel: string,
-  ): { sessionPrefix: string; replyCapabilityId: string } | null {
-    if (channel === "whatsapp" && this.whatsAppAgentEnabled()) {
-      return {
-        sessionPrefix: "whatsapp",
-        replyCapabilityId: "whatsapp.send_message",
-      };
-    }
-
-    if (channel === "wecom" && this.wecomAgentEnabled()) {
-      return {
-        sessionPrefix: "wecom",
-        replyCapabilityId: "wecom.send_message",
-      };
-    }
-
-    return null;
-  }
-
-  private toChannelMessage(payload: unknown): AgentChannelMessage | null {
-    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-      return null;
-    }
-
-    const record = payload as Record<string, unknown>;
-    const channel = record.channel;
-    const senderId = record.senderId;
-    const chatId = record.chatId;
-    const content = record.content;
-    const timestamp = record.timestamp;
-    const media = record.media;
-    const metadata = record.metadata;
-
-    if (
-      channel !== "feishu" &&
-      channel !== "whatsapp" &&
-      channel !== "wecom"
-    ) {
-      return null;
-    }
-
-    if (
-      typeof senderId !== "string" ||
-      typeof chatId !== "string" ||
-      typeof content !== "string" ||
-      typeof timestamp !== "string" ||
-      !Array.isArray(media) ||
-      media.some((item) => typeof item !== "string") ||
-      typeof metadata !== "object" ||
-      metadata === null ||
-      Array.isArray(metadata)
-    ) {
-      return null;
-    }
-
-    return {
-      channel,
-      senderId,
-      chatId,
-      content,
-      timestamp,
-      media: [...media],
-      metadata: metadata as Record<string, unknown>,
-    };
-  }
-
-  private formatChannelInput(payload: AgentChannelMessage): string {
-    const parts: string[] = [];
-
-    if (payload.content.trim()) {
-      parts.push(payload.content);
-    }
-
-    if (payload.media.length > 0) {
-      parts.push("Media files:");
-      for (const mediaPath of payload.media) {
-        parts.push(`- ${mediaPath}`);
-      }
-    }
-
-    return parts.join("\n").trim();
-  }
 }
 
 export function buildPromptMessages(request: AgentPromptRequest): AgentMessage[] {

@@ -20,7 +20,6 @@ const pluginLoader = new PluginLoader();
 const pluginModulePaths = [
   new URL("../plugins/echo/src/index.ts", import.meta.url).href,
   new URL("../plugins/cron/src/index.ts", import.meta.url).href,
-  new URL("../plugins/web-search/src/index.ts", import.meta.url).href,
   new URL("../plugins/agent/src/index.ts", import.meta.url).href,
   new URL("../plugins/terminals/src/index.ts", import.meta.url).href,
   // new URL("../plugins/feishu/src/index.ts", import.meta.url).href,
