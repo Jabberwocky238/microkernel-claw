@@ -45,10 +45,7 @@ export class WecomStartCapabilityProvider extends WecomCapabilityProvider {
     }, plugin);
   }
 
-  public override async invoke(
-    _input: unknown,
-    _context?: CapabilityContext,
-  ): Promise<CapabilityResult> {
+  public override async invoke(): Promise<CapabilityResult> {
     try {
       await this.plugin.inner().start();
       return { ok: true, value: { started: true } };
@@ -89,8 +86,8 @@ export class WecomStopCapabilityProvider extends WecomCapabilityProvider {
 export class WecomStatusCapabilityProvider extends WecomCapabilityProvider {
   constructor(plugin: WecomPluginLike) {
     super({
-      id: "wecom.status",
-      description: "Get current WeCom plugin status.",
+      id: "channel.status",
+      description: "Get current channel plugin status.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["wecom", "channel", "read"],
@@ -98,54 +95,34 @@ export class WecomStatusCapabilityProvider extends WecomCapabilityProvider {
       output: {
         type: "object",
         properties: {
+          channel: { type: "string" },
           enabled: { type: "boolean" },
           started: { type: "boolean" },
-          connected: { type: "boolean" },
-          authenticated: { type: "boolean" },
-          websocketUrl: { type: "string" },
-          botId: { type: "string" },
-          mediaDir: { type: "string" },
           queueSize: { type: "integer" },
-          reconnectAttempts: { type: "integer" },
-          lastError: { type: "string" },
-          allowFrom: { type: "array", items: { type: "string" } },
-          groupAllowFrom: { type: "array", items: { type: "string" } },
         },
-        required: [
-          "enabled",
-          "started",
-          "connected",
-          "authenticated",
-          "websocketUrl",
-          "botId",
-          "mediaDir",
-          "queueSize",
-          "reconnectAttempts",
-          "allowFrom",
-          "groupAllowFrom",
-        ],
+        required: ["channel", "enabled", "started", "queueSize"],
         additionalProperties: true,
       },
     }, plugin);
   }
 
   public override async invoke(): Promise<CapabilityResult> {
-    return { ok: true, value: this.plugin.inner().status() };
+    return { ok: true, value: { channel: this.plugin.name, ...this.plugin.inner().status() } };
   }
 }
 
 export class WecomSendMessageCapabilityProvider extends WecomCapabilityProvider {
   constructor(plugin: WecomPluginLike) {
     super({
-      id: "wecom.send_message",
-      description: "Send a markdown message to WeCom users or groups.",
+      id: "channel.send_message",
+      description: "Send a text message to a channel.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["wecom", "channel", "write"],
       input: {
         type: "object",
         properties: {
-          to: { type: "string", description: "A userid for DM or a chatid for group." },
+          to: { type: "string" },
           text: { type: "string" },
         },
         required: ["to", "text"],
@@ -154,10 +131,11 @@ export class WecomSendMessageCapabilityProvider extends WecomCapabilityProvider 
       output: {
         type: "object",
         properties: {
+          channel: { type: "string" },
           to: { type: "string" },
           sent: { type: "boolean" },
         },
-        required: ["to", "sent"],
+        required: ["channel", "to", "sent"],
         additionalProperties: false,
       },
     }, plugin);
@@ -169,7 +147,8 @@ export class WecomSendMessageCapabilityProvider extends WecomCapabilityProvider 
     }
 
     try {
-      return { ok: true, value: await this.plugin.inner().sendMessage(input.to, input.text) };
+      const result = await this.plugin.inner().sendMessage(input.to, input.text);
+      return { ok: true, value: { channel: this.plugin.name, ...result } };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -179,8 +158,8 @@ export class WecomSendMessageCapabilityProvider extends WecomCapabilityProvider 
 export class WecomPullMessagesCapabilityProvider extends WecomCapabilityProvider {
   constructor(plugin: WecomPluginLike) {
     super({
-      id: "wecom.pull_messages",
-      description: "Pull buffered inbound WeCom messages.",
+      id: "channel.pull_messages",
+      description: "Pull buffered inbound channel messages.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["wecom", "channel", "read"],
@@ -197,15 +176,17 @@ export class WecomPullMessagesCapabilityProvider extends WecomCapabilityProvider
         items: {
           type: "object",
           properties: {
+            channel: { type: "string" },
             id: { type: "string" },
             senderId: { type: "string" },
             chatId: { type: "string" },
             content: { type: "string" },
             timestamp: { type: "string" },
-            msgType: { type: "string" },
+            media: { type: "array", items: { type: "string" } },
+            metadata: { type: "object", properties: {}, additionalProperties: true },
           },
-          required: ["id", "senderId", "chatId", "content", "timestamp", "msgType"],
-          additionalProperties: true,
+          required: ["channel", "id", "senderId", "chatId", "content", "timestamp", "media", "metadata"],
+          additionalProperties: false,
         },
       },
     }, plugin);
@@ -216,6 +197,22 @@ export class WecomPullMessagesCapabilityProvider extends WecomCapabilityProvider
       isRecord(input) && typeof input.limit === "number" && Number.isInteger(input.limit)
         ? input.limit
         : 50;
-    return { ok: true, value: this.plugin.inner().pullMessages(limit) };
+    return {
+      ok: true,
+      value: this.plugin.inner().pullMessages(limit).map((message) => ({
+        channel: this.plugin.name,
+        id: message.id,
+        senderId: message.senderId,
+        chatId: message.chatId,
+        content: message.content,
+        timestamp: message.timestamp,
+        media: [...message.media],
+        metadata: {
+          msgType: message.msgType,
+          event: message.event,
+          ...message.metadata,
+        },
+      })),
+    };
   }
 }

@@ -101,6 +101,10 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
   public async invokeCapability(
     capabilityId: string,
     input?: unknown,
+    context?: {
+      metadata?: Record<string, unknown>;
+      restriction?: { includePlugins?: string[]; excludePlugins?: string[] };
+    },
   ): Promise<unknown> {
     if (typeof capabilityId !== "string" || capabilityId.trim().length === 0) {
       throw new TypeError("capabilityId must be a non-empty string.");
@@ -127,6 +131,8 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       normalizedInput,
       {
         callerPluginName: this.name,
+        metadata: context?.metadata,
+        restriction: context?.restriction,
       },
     );
 
@@ -305,7 +311,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       const metadata = record.metadata;
 
       if (
-        (channel === "feishu" || channel === "whatsapp" || channel === "wecom") &&
+        this.isSupportedChannel(channel) &&
         typeof senderId === "string" &&
         typeof chatId === "string" &&
         typeof content === "string" &&
@@ -344,24 +350,11 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       return;
     }
 
-    let route: { sessionPrefix: string; replyCapabilityId: string } | null = null;
-
-    if (payload.channel === "whatsapp" && this.whatsAppAgentEnabled()) {
-      route = {
-        sessionPrefix: "whatsapp",
-        replyCapabilityId: "whatsapp.send_message",
-      };
-    } else if (payload.channel === "wecom" && this.wecomAgentEnabled()) {
-      route = {
-        sessionPrefix: "wecom",
-        replyCapabilityId: "wecom.send_message",
-      };
-    }
-
-    if (!route) {
+    if (!this.channelAgentEnabled(payload.channel)) {
       return;
     }
-    const sessionId = `${route.sessionPrefix}:${payload.chatId}`;
+
+    const sessionId = `${payload.channel}:${payload.chatId}`;
 
     const ctrlCommandResult = await this.ctrlCommandFilter.handle(payload.content, {
       sessionId,
@@ -371,9 +364,13 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     if (ctrlCommandResult.handled) {
       this.lastProgressMessageBySession.delete(sessionId);
       if (ctrlCommandResult.message?.trim()) {
-        await this.invokeCapability(route.replyCapabilityId, {
+        await this.invokeCapability("channel.send_message", {
           to: payload.chatId,
           text: ctrlCommandResult.message,
+        }, {
+          restriction: {
+            includePlugins: [payload.channel],
+          },
         });
       }
       return;
@@ -400,9 +397,13 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       undefined,
       undefined,
       async (message) => {
-        await this.invokeCapability(route.replyCapabilityId, {
+        await this.invokeCapability("channel.send_message", {
           to: payload.chatId,
           text: message,
+        }, {
+          restriction: {
+            includePlugins: [payload.channel],
+          },
         });
       },
     );
@@ -410,7 +411,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       this.logger().info("agent produced empty channel reply", {
         channel: payload.channel,
         chatId: payload.chatId,
-        sessionId: `${route.sessionPrefix}:${payload.chatId}`,
+        sessionId,
       });
     }
   }
@@ -512,8 +513,11 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     const visibleDescriptors = descriptors.filter(
       (descriptor) => allowedCapabilityIds.includes(descriptor.id),
     );
+    const dedupedDescriptors = [...new Map(
+      visibleDescriptors.map((descriptor) => [descriptor.id, descriptor]),
+    ).values()];
 
-    return visibleDescriptors.map((descriptor) => {
+    return dedupedDescriptors.map((descriptor) => {
       const toolName = descriptor.id.replace(/[^a-zA-Z0-9_-]/g, "_");
 
       return {
@@ -534,22 +538,6 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
         },
       };
     });
-  }
-
-  private toProviderToolName(capabilityId: string): string {
-    return capabilityId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  }
-
-  private stringifyToolResult(value: unknown): string {
-    if (value === undefined) {
-      return "OK";
-    }
-
-    if (typeof value === "string") {
-      return value;
-    }
-
-    return JSON.stringify(value, null, 2);
   }
 
   private getProvider(): AgentProvider {
@@ -742,11 +730,19 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     };
   }
 
-  private whatsAppAgentEnabled(): boolean {
-    return process.env.WHATSAPP_AGENT_ENABLED === "true";
+  private isSupportedChannel(channel: unknown): channel is "feishu" | "whatsapp" | "wecom" {
+    return channel === "feishu" || channel === "whatsapp" || channel === "wecom";
   }
 
-  private wecomAgentEnabled(): boolean {
+  private channelAgentEnabled(channel: "feishu" | "whatsapp" | "wecom"): boolean {
+    if (channel === "feishu") {
+      return process.env.FEISHU_AGENT_ENABLED === "true";
+    }
+
+    if (channel === "whatsapp") {
+      return process.env.WHATSAPP_AGENT_ENABLED === "true";
+    }
+
     return process.env.WECOM_AGENT_ENABLED === "true";
   }
 
@@ -769,3 +765,4 @@ export function buildPromptMessages(request: AgentPromptRequest): AgentMessage[]
 
   return messages;
 }
+

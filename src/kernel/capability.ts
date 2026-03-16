@@ -41,9 +41,24 @@ export interface CapabilityDescriptor {
   output?: CapabilitySchema;
 }
 
+export interface CapabilityInvokeRestriction {
+  includePlugins?: string[];
+  excludePlugins?: string[];
+}
+
 export interface CapabilityContext {
   callerPluginName?: string;
   signal?: AbortSignal;
+  metadata?: Record<string, unknown>;
+  restriction?: CapabilityInvokeRestriction;
+}
+
+export interface CapabilityDispatchResult {
+  pluginName: string;
+  capabilityId: string;
+  ok: boolean;
+  value?: unknown;
+  error?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -52,6 +67,7 @@ export interface CapabilityResult {
   value?: unknown;
   error?: string;
   metadata?: Record<string, unknown>;
+  results?: CapabilityDispatchResult[];
 }
 
 export abstract class CapabilityProvider {

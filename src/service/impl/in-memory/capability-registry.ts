@@ -15,7 +15,7 @@ function matchesAllTags(
 }
 
 export class InMemoryCapabilityRegistryService extends CapabilityRegistryServiceProvider {
-  private readonly providers = new Map<string, CapabilityProvider>();
+  private readonly providers = new Map<string, CapabilityProvider[]>();
 
   constructor() {
     super({
@@ -26,25 +26,43 @@ export class InMemoryCapabilityRegistryService extends CapabilityRegistryService
   }
 
   public override register(provider: CapabilityProvider): void {
-    const existing = this.providers.get(provider.id);
+    const existing = this.providers.get(provider.id) ?? [];
 
-    if (existing && existing !== provider) {
-      throw new Error(`Capability already registered: ${provider.id}`);
+    if (existing.some((item) => item === provider)) {
+      return;
     }
 
-    this.providers.set(provider.id, provider);
+    existing.push(provider);
+    this.providers.set(provider.id, existing);
   }
 
-  public override unregister(capabilityId: string): void {
-    this.providers.delete(capabilityId);
+  public override unregister(capabilityId: string, pluginName?: string): void {
+    if (!pluginName) {
+      this.providers.delete(capabilityId);
+      return;
+    }
+
+    const existing = this.providers.get(capabilityId);
+    if (!existing) {
+      return;
+    }
+
+    const filtered = existing.filter((provider) => provider.descriptor.pluginName !== pluginName);
+    if (filtered.length === 0) {
+      this.providers.delete(capabilityId);
+      return;
+    }
+
+    this.providers.set(capabilityId, filtered);
   }
 
-  public override get(capabilityId: string): CapabilityProvider | undefined {
-    return this.providers.get(capabilityId);
+  public override get(capabilityId: string): CapabilityProvider[] {
+    return [...(this.providers.get(capabilityId) ?? [])];
   }
 
   public override list(tags?: string[]): CapabilityDescriptor[] {
     return [...this.providers.values()]
+      .flat()
       .map((provider) => provider.descriptor)
       .filter((descriptor) => matchesAllTags(descriptor, tags));
   }

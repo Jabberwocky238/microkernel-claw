@@ -89,8 +89,8 @@ export class WhatsAppStopCapabilityProvider extends WhatsAppCapabilityProvider {
 export class WhatsAppStatusCapabilityProvider extends WhatsAppCapabilityProvider {
   constructor(plugin: WhatsAppPluginLike) {
     super({
-      id: "whatsapp.status",
-      description: "Get current WhatsApp plugin status.",
+      id: "channel.status",
+      description: "Get current channel plugin status.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["whatsapp", "channel", "read"],
@@ -98,31 +98,27 @@ export class WhatsAppStatusCapabilityProvider extends WhatsAppCapabilityProvider
       output: {
         type: "object",
         properties: {
+          channel: { type: "string" },
           enabled: { type: "boolean" },
           started: { type: "boolean" },
-          authDir: { type: "string" },
-          mediaDir: { type: "string" },
           queueSize: { type: "integer" },
-          qrPending: { type: "boolean" },
-          qrPath: { type: "string" },
-          qrUpdatedAt: { type: "string" },
         },
-        required: ["enabled", "started", "authDir", "mediaDir", "queueSize", "qrPending"],
+        required: ["channel", "enabled", "started", "queueSize"],
         additionalProperties: true,
       },
     }, plugin);
   }
 
   public override async invoke(): Promise<CapabilityResult> {
-    return { ok: true, value: this.plugin.inner().status() };
+    return { ok: true, value: { channel: this.plugin.name, ...this.plugin.inner().status() } };
   }
 }
 
 export class WhatsAppSendMessageCapabilityProvider extends WhatsAppCapabilityProvider {
   constructor(plugin: WhatsAppPluginLike) {
     super({
-      id: "whatsapp.send_message",
-      description: "Send a text message to WhatsApp.",
+      id: "channel.send_message",
+      description: "Send a text message to a channel.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["whatsapp", "channel", "write"],
@@ -138,10 +134,11 @@ export class WhatsAppSendMessageCapabilityProvider extends WhatsAppCapabilityPro
       output: {
         type: "object",
         properties: {
+          channel: { type: "string" },
           to: { type: "string" },
           sent: { type: "boolean" },
         },
-        required: ["to", "sent"],
+        required: ["channel", "to", "sent"],
         additionalProperties: false,
       },
     }, plugin);
@@ -152,7 +149,8 @@ export class WhatsAppSendMessageCapabilityProvider extends WhatsAppCapabilityPro
       return { ok: false, error: "to and text are required." };
     }
     try {
-      return { ok: true, value: await this.plugin.inner().sendMessage(input.to, input.text) };
+      const result = await this.plugin.inner().sendMessage(input.to, input.text);
+      return { ok: true, value: { channel: this.plugin.name, ...result } };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -162,8 +160,8 @@ export class WhatsAppSendMessageCapabilityProvider extends WhatsAppCapabilityPro
 export class WhatsAppPullMessagesCapabilityProvider extends WhatsAppCapabilityProvider {
   constructor(plugin: WhatsAppPluginLike) {
     super({
-      id: "whatsapp.pull_messages",
-      description: "Pull buffered inbound WhatsApp messages.",
+      id: "channel.pull_messages",
+      description: "Pull buffered inbound channel messages.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["whatsapp", "channel", "read"],
@@ -180,14 +178,17 @@ export class WhatsAppPullMessagesCapabilityProvider extends WhatsAppCapabilityPr
         items: {
           type: "object",
           properties: {
+            channel: { type: "string" },
             id: { type: "string" },
-            sender: { type: "string" },
+            senderId: { type: "string" },
+            chatId: { type: "string" },
             content: { type: "string" },
-            timestamp: { type: "number" },
-            isGroup: { type: "boolean" },
+            timestamp: { type: "string" },
+            media: { type: "array", items: { type: "string" } },
+            metadata: { type: "object", properties: {}, additionalProperties: true },
           },
-          required: ["id", "sender", "content", "timestamp", "isGroup"],
-          additionalProperties: true,
+          required: ["channel", "id", "senderId", "chatId", "content", "timestamp", "media", "metadata"],
+          additionalProperties: false,
         },
       },
     }, plugin);
@@ -198,6 +199,21 @@ export class WhatsAppPullMessagesCapabilityProvider extends WhatsAppCapabilityPr
       isRecord(input) && typeof input.limit === "number" && Number.isInteger(input.limit)
         ? input.limit
         : 50;
-    return { ok: true, value: this.plugin.inner().pullMessages(limit) };
+    return {
+      ok: true,
+      value: this.plugin.inner().pullMessages(limit).map((message) => ({
+        channel: this.plugin.name,
+        id: message.id,
+        senderId: message.sender,
+        chatId: message.sender,
+        content: message.content,
+        timestamp: new Date(message.timestamp * 1000).toISOString(),
+        media: [...message.media],
+        metadata: {
+          pn: message.pn,
+          isGroup: message.isGroup,
+        },
+      })),
+    };
   }
 }

@@ -89,8 +89,8 @@ export class FeishuStopCapabilityProvider extends FeishuCapabilityProvider {
 export class FeishuStatusCapabilityProvider extends FeishuCapabilityProvider {
   constructor(plugin: FeishuPluginLike) {
     super({
-      id: "feishu.status",
-      description: "Get current Feishu plugin status.",
+      id: "channel.status",
+      description: "Get current channel plugin status.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["feishu", "channel", "read"],
@@ -98,57 +98,60 @@ export class FeishuStatusCapabilityProvider extends FeishuCapabilityProvider {
       output: {
         type: "object",
         properties: {
+          channel: { type: "string" },
           enabled: { type: "boolean" },
           started: { type: "boolean" },
           queueSize: { type: "integer" },
         },
-        required: ["enabled", "started", "queueSize"],
+        required: ["channel", "enabled", "started", "queueSize"],
         additionalProperties: true,
       },
     }, plugin);
   }
 
   public override async invoke(): Promise<CapabilityResult> {
-    return { ok: true, value: this.plugin.inner().status() };
+    return { ok: true, value: { channel: this.plugin.name, ...this.plugin.inner().status() } };
   }
 }
 
 export class FeishuSendMessageCapabilityProvider extends FeishuCapabilityProvider {
   constructor(plugin: FeishuPluginLike) {
     super({
-      id: "feishu.send_message",
-      description: "Send a text message to Feishu.",
+      id: "channel.send_message",
+      description: "Send a text message to a channel.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["feishu", "channel", "write"],
       input: {
         type: "object",
         properties: {
-          chatId: { type: "string" },
-          content: { type: "string" },
+          to: { type: "string" },
+          text: { type: "string" },
         },
-        required: ["chatId", "content"],
+        required: ["to", "text"],
         additionalProperties: false,
       },
       output: {
         type: "object",
         properties: {
-          chatId: { type: "string" },
+          channel: { type: "string" },
+          to: { type: "string" },
           sent: { type: "boolean" },
         },
-        required: ["chatId", "sent"],
+        required: ["channel", "to", "sent"],
         additionalProperties: false,
       },
     }, plugin);
   }
 
   public override async invoke(input: unknown): Promise<CapabilityResult> {
-    if (!isRecord(input) || typeof input.chatId !== "string" || typeof input.content !== "string") {
-      return { ok: false, error: "chatId and content are required." };
+    if (!isRecord(input) || typeof input.to !== "string" || typeof input.text !== "string") {
+      return { ok: false, error: "to and text are required." };
     }
 
     try {
-      return { ok: true, value: await this.plugin.inner().sendMessage(input.chatId, input.content) };
+      const result = await this.plugin.inner().sendMessage(input.to, input.text);
+      return { ok: true, value: { channel: this.plugin.name, to: result.chatId, sent: result.sent } };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -158,8 +161,8 @@ export class FeishuSendMessageCapabilityProvider extends FeishuCapabilityProvide
 export class FeishuPullMessagesCapabilityProvider extends FeishuCapabilityProvider {
   constructor(plugin: FeishuPluginLike) {
     super({
-      id: "feishu.pull_messages",
-      description: "Pull buffered inbound Feishu messages.",
+      id: "channel.pull_messages",
+      description: "Pull buffered inbound channel messages.",
       pluginName: plugin.name,
       version: plugin.version,
       tags: ["feishu", "channel", "read"],
@@ -176,14 +179,17 @@ export class FeishuPullMessagesCapabilityProvider extends FeishuCapabilityProvid
         items: {
           type: "object",
           properties: {
+            channel: { type: "string" },
             id: { type: "string" },
             senderId: { type: "string" },
             chatId: { type: "string" },
             content: { type: "string" },
             timestamp: { type: "string" },
+            media: { type: "array", items: { type: "string" } },
+            metadata: { type: "object", properties: {}, additionalProperties: true },
           },
-          required: ["id", "senderId", "chatId", "content", "timestamp"],
-          additionalProperties: true,
+          required: ["channel", "id", "senderId", "chatId", "content", "timestamp", "media", "metadata"],
+          additionalProperties: false,
         },
       },
     }, plugin);
@@ -194,6 +200,12 @@ export class FeishuPullMessagesCapabilityProvider extends FeishuCapabilityProvid
       isRecord(input) && typeof input.limit === "number" && Number.isInteger(input.limit)
         ? input.limit
         : 50;
-    return { ok: true, value: this.plugin.inner().pullMessages(limit) };
+    return {
+      ok: true,
+      value: this.plugin.inner().pullMessages(limit).map((message) => ({
+        channel: this.plugin.name,
+        ...message,
+      })),
+    };
   }
 }
