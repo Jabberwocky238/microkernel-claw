@@ -120,7 +120,7 @@ export interface SubagentPluginLike {
   getSessionStoreForSubagent(): AgentSessionStore;
 }
 
-export type AgentChannelName = "feishu" | "whatsapp" | "wecom";
+export type AgentChannelName = "feishu" | "whatsapp" | "wecom" | "telegram";
 
 export interface AgentChannelMessage {
   channel: AgentChannelName;
@@ -131,3 +131,4 @@ export interface AgentChannelMessage {
   media: string[];
   metadata: Record<string, unknown>;
 }
+

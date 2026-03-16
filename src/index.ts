@@ -25,6 +25,7 @@ const pluginModulePaths = [
   // new URL("../plugins/feishu/src/index.ts", import.meta.url).href,
   new URL("../plugins/whatsapp/src/index.ts", import.meta.url).href,
   new URL("../plugins/wecom/src/index.ts", import.meta.url).href,
+  new URL("../plugins/telegram/src/index.ts", import.meta.url).href,
 ];
 
 for (const pluginModulePath of pluginModulePaths) {

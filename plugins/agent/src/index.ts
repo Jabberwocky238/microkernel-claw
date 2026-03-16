@@ -728,11 +728,11 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     };
   }
 
-  private isSupportedChannel(channel: unknown): channel is "feishu" | "whatsapp" | "wecom" {
-    return channel === "feishu" || channel === "whatsapp" || channel === "wecom";
+  private isSupportedChannel(channel: unknown): channel is "feishu" | "whatsapp" | "wecom" | "telegram" {
+    return channel === "feishu" || channel === "whatsapp" || channel === "wecom" || channel === "telegram";
   }
 
-  private channelAgentEnabled(channel: "feishu" | "whatsapp" | "wecom"): boolean {
+  private channelAgentEnabled(channel: "feishu" | "whatsapp" | "wecom" | "telegram"): boolean {
     if (channel === "feishu") {
       return process.env.FEISHU_AGENT_ENABLED === "true";
     }
@@ -741,7 +741,11 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       return process.env.WHATSAPP_AGENT_ENABLED === "true";
     }
 
-    return process.env.WECOM_AGENT_ENABLED === "true";
+    if (channel === "wecom") {
+      return process.env.WECOM_AGENT_ENABLED === "true";
+    }
+
+    return process.env.TELEGRAM_AGENT_ENABLED === "true";
   }
 
 }
@@ -763,6 +767,8 @@ export function buildPromptMessages(request: AgentPromptRequest): AgentMessage[]
 
   return messages;
 }
+
+
 
 
 

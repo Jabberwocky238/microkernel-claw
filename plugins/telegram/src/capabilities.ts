@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   CapabilityProvider,
   type CapabilityContext,
@@ -15,17 +14,17 @@ import {
   channelStopOutputSchema,
   emptyObjectSchema,
 } from "@openintern3/plugin-agent/capability-schemas";
-import type { FeishuInner } from "./inner.js";
+import type { TelegramEngine } from "./engine.js";
 
-interface FeishuPluginLike {
+interface TelegramPluginLike {
   readonly name: string;
   readonly version: string;
   readonly isInitialized: boolean;
-  inner(): FeishuInner;
+  engine(): TelegramEngine;
 }
 
-abstract class FeishuCapabilityProvider extends CapabilityProvider {
-  constructor(descriptor: CapabilityDescriptor, protected readonly plugin: FeishuPluginLike) {
+abstract class TelegramCapabilityProvider extends CapabilityProvider {
+  constructor(descriptor: CapabilityDescriptor, protected readonly plugin: TelegramPluginLike) {
     super(descriptor);
   }
 
@@ -34,13 +33,13 @@ abstract class FeishuCapabilityProvider extends CapabilityProvider {
   }
 }
 
-export class FeishuStartCapabilityProvider extends FeishuCapabilityProvider {
-  constructor(plugin: FeishuPluginLike) {
+export class TelegramStartCapabilityProvider extends TelegramCapabilityProvider {
+  constructor(plugin: TelegramPluginLike) {
     super({
-      description: "Start the Feishu client.",
+      description: "Start the Telegram bot polling loop.",
       pluginName: plugin.name,
       version: plugin.version,
-      namespaces: ["feishu"],
+      namespaces: ["telegram"],
       signature: "start",
       inputSchema: emptyObjectSchema,
       outputSchema: channelStartOutputSchema,
@@ -52,7 +51,7 @@ export class FeishuStartCapabilityProvider extends FeishuCapabilityProvider {
     _context?: CapabilityContext,
   ): Promise<CapabilityResult> {
     try {
-      await this.plugin.inner().start();
+      await this.plugin.engine().start();
       return { ok: true, value: { started: true } };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -60,13 +59,13 @@ export class FeishuStartCapabilityProvider extends FeishuCapabilityProvider {
   }
 }
 
-export class FeishuStopCapabilityProvider extends FeishuCapabilityProvider {
-  constructor(plugin: FeishuPluginLike) {
+export class TelegramStopCapabilityProvider extends TelegramCapabilityProvider {
+  constructor(plugin: TelegramPluginLike) {
     super({
-      description: "Stop the Feishu client.",
+      description: "Stop the Telegram bot polling loop.",
       pluginName: plugin.name,
       version: plugin.version,
-      namespaces: ["feishu"],
+      namespaces: ["telegram"],
       signature: "stop",
       inputSchema: emptyObjectSchema,
       outputSchema: channelStopOutputSchema,
@@ -75,7 +74,7 @@ export class FeishuStopCapabilityProvider extends FeishuCapabilityProvider {
 
   protected override async invokeImpl(): Promise<CapabilityResult> {
     try {
-      await this.plugin.inner().stop();
+      await this.plugin.engine().stop();
       return { ok: true, value: { stopped: true } };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -83,13 +82,13 @@ export class FeishuStopCapabilityProvider extends FeishuCapabilityProvider {
   }
 }
 
-export class FeishuStatusCapabilityProvider extends FeishuCapabilityProvider {
-  constructor(plugin: FeishuPluginLike) {
+export class TelegramStatusCapabilityProvider extends TelegramCapabilityProvider {
+  constructor(plugin: TelegramPluginLike) {
     super({
-      description: "Get current channel plugin status.",
+      description: "Get current telegram plugin status.",
       pluginName: plugin.name,
       version: plugin.version,
-      namespaces: ["feishu"],
+      namespaces: ["telegram"],
       signature: "status",
       inputSchema: emptyObjectSchema,
       outputSchema: channelStatusOutputSchema,
@@ -97,17 +96,17 @@ export class FeishuStatusCapabilityProvider extends FeishuCapabilityProvider {
   }
 
   protected override async invokeImpl(): Promise<CapabilityResult> {
-    return { ok: true, value: { channel: this.plugin.name, ...this.plugin.inner().status() } };
+    return { ok: true, value: { channel: this.plugin.name, ...this.plugin.engine().status() } };
   }
 }
 
-export class FeishuSendMessageCapabilityProvider extends FeishuCapabilityProvider {
-  constructor(plugin: FeishuPluginLike) {
+export class TelegramSendMessageCapabilityProvider extends TelegramCapabilityProvider {
+  constructor(plugin: TelegramPluginLike) {
     super({
-      description: "Send a text message to a channel.",
+      description: "Send a text message to a telegram chat.",
       pluginName: plugin.name,
       version: plugin.version,
-      namespaces: ["feishu"],
+      namespaces: ["channel", "telegram"],
       signature: "send_message",
       inputSchema: channelSendMessageInputSchema,
       outputSchema: channelSendMessageOutputSchema,
@@ -118,21 +117,21 @@ export class FeishuSendMessageCapabilityProvider extends FeishuCapabilityProvide
     const { to, text } = channelSendMessageInputSchema.parse(input);
 
     try {
-      const result = await this.plugin.inner().sendMessage(to, text);
-      return { ok: true, value: { channel: this.plugin.name, to: result.chatId, sent: result.sent } };
+      const result = await this.plugin.engine().sendMessage(to, text);
+      return { ok: true, value: { channel: this.plugin.name, ...result } };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 }
 
-export class FeishuPullMessagesCapabilityProvider extends FeishuCapabilityProvider {
-  constructor(plugin: FeishuPluginLike) {
+export class TelegramPullMessagesCapabilityProvider extends TelegramCapabilityProvider {
+  constructor(plugin: TelegramPluginLike) {
     super({
-      description: "Pull buffered inbound channel messages.",
+      description: "Pull buffered inbound telegram messages.",
       pluginName: plugin.name,
       version: plugin.version,
-      namespaces: ["feishu"],
+      namespaces: ["channel", "telegram"],
       signature: "pull_messages",
       inputSchema: channelPullMessagesInputSchema,
       outputSchema: channelPullMessagesOutputSchema,
@@ -141,10 +140,9 @@ export class FeishuPullMessagesCapabilityProvider extends FeishuCapabilityProvid
 
   protected override async invokeImpl(input: unknown): Promise<CapabilityResult> {
     const { limit = 50 } = channelPullMessagesInputSchema.parse(input);
-
     return {
       ok: true,
-      value: this.plugin.inner().pullMessages(limit).map((message) => ({
+      value: this.plugin.engine().pullMessages(limit).map((message) => ({
         channel: this.plugin.name,
         id: message.id,
         senderId: message.senderId,
@@ -152,11 +150,8 @@ export class FeishuPullMessagesCapabilityProvider extends FeishuCapabilityProvid
         content: message.content,
         timestamp: message.timestamp,
         media: [...message.media],
-        metadata: z.object({}).catchall(z.unknown()).parse(message.metadata),
+        metadata: { ...message.metadata },
       })),
     };
   }
 }
-
-
-

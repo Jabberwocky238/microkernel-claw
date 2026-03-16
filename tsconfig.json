@@ -14,6 +14,7 @@
       "@openintern3/plugin-agent/*": ["plugins/agent/src/*.ts"]
     },
     "strict": true,
+    "allowSyntheticDefaultImports": true,
     "lib": ["ES2020"],
     "skipLibCheck": true
   },
@@ -24,6 +25,7 @@
     "plugins/echo",
     "plugins/feishu",
     "plugins/filesystem",
+    "plugins/telegram",
     "plugins/terminals",
     "plugins/whatsapp",
     "plugins/wecom"

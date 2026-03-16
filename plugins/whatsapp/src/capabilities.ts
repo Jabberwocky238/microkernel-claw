@@ -13,7 +13,7 @@ import {
   channelStatusOutputSchema,
   channelStopOutputSchema,
   emptyObjectSchema,
-} from "@openintern3/plugin-agent/channel-capability-schemas";
+} from "@openintern3/plugin-agent/capability-schemas";
 import type { WhatsAppInner } from "./inner.js";
 
 interface WhatsAppPluginLike {
@@ -159,5 +159,6 @@ export class WhatsAppPullMessagesCapabilityProvider extends WhatsAppCapabilityPr
     };
   }
 }
+
 
 

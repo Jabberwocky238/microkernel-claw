@@ -13,7 +13,7 @@ import {
   channelStatusOutputSchema,
   channelStopOutputSchema,
   emptyObjectSchema,
-} from "@openintern3/plugin-agent/channel-capability-schemas";
+} from "@openintern3/plugin-agent/capability-schemas";
 import type { WecomEngine } from "./engine.js";
 
 interface WecomPluginLike {
@@ -160,3 +160,4 @@ export class WecomPullMessagesCapabilityProvider extends WecomCapabilityProvider
     };
   }
 }
+
