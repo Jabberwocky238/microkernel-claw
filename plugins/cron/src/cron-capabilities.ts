@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   CapabilityProvider,
   type CapabilityContext,
@@ -17,37 +18,33 @@ interface CronPluginLike {
   }>;
 }
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const cronAddInputSchema = z.object({
+  eventType: z.string().trim().min(1).describe("Event type emitted by the cron job."),
+  intervalMs: z.int().positive().describe("Cron interval in milliseconds."),
+}).strict();
+
+const cronDeleteInputSchema = z.object({
+  id: z.string().trim().min(1).describe("Cron job id."),
+}).strict();
+
+const cronListItemSchema = z.object({
+  id: z.string(),
+  eventType: z.string(),
+  intervalMs: z.number(),
+}).strict();
+
+const emptyObjectSchema = z.object({}).strict();
 
 export class CronAddCapabilityProvider extends CapabilityProvider {
   constructor(private readonly plugin: CronPluginLike) {
     super({
-      id: "cron.add",
       description: "Create a repeating cron job.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["cron", "schedule", "write"],
-      input: {
-        type: "object",
-        properties: {
-          eventType: {
-            type: "string",
-            description: "Event type emitted by the cron job.",
-          },
-          intervalMs: {
-            type: "number",
-            description: "Cron interval in milliseconds.",
-          },
-        },
-        required: ["eventType", "intervalMs"],
-        additionalProperties: false,
-      },
-      output: {
-        type: "string",
-        description: "The created cron job id.",
-      },
+      namespaces: ["cron"],
+      signature: "add",
+      inputSchema: cronAddInputSchema,
+      outputSchema: z.string().describe("The created cron job id."),
     });
   }
 
@@ -55,33 +52,11 @@ export class CronAddCapabilityProvider extends CapabilityProvider {
     return this.plugin.isInitialized;
   }
 
-  public override async invoke(
+  protected override async invokeImpl(
     input: unknown,
     _context?: CapabilityContext,
   ): Promise<CapabilityResult> {
-    if (!isObjectRecord(input)) {
-      return {
-        ok: false,
-        error: "cron.add expects an object input.",
-      };
-    }
-
-    const eventType = input.eventType;
-    const intervalMs = input.intervalMs;
-
-    if (typeof eventType !== "string" || eventType.trim().length === 0) {
-      return {
-        ok: false,
-        error: "eventType must be a non-empty string.",
-      };
-    }
-
-    if (typeof intervalMs !== "number" || !Number.isInteger(intervalMs) || intervalMs <= 0) {
-      return {
-        ok: false,
-        error: "intervalMs must be a positive integer.",
-      };
-    }
+    const { eventType, intervalMs } = cronAddInputSchema.parse(input);
 
     return {
       ok: true,
@@ -93,26 +68,16 @@ export class CronAddCapabilityProvider extends CapabilityProvider {
 export class CronDeleteCapabilityProvider extends CapabilityProvider {
   constructor(private readonly plugin: CronPluginLike) {
     super({
-      id: "cron.delete",
       description: "Delete an existing cron job by id.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["cron", "schedule", "write"],
-      input: {
-        type: "object",
-        properties: {
-          id: {
-            type: "string",
-            description: "Cron job id.",
-          },
-        },
-        required: ["id"],
-        additionalProperties: false,
-      },
-      output: {
-        type: "object",
-        description: "Deletion result.",
-      },
+      namespaces: ["cron"],
+      signature: "delete",
+      inputSchema: cronDeleteInputSchema,
+      outputSchema: z.object({
+        deleted: z.literal(true),
+        id: z.string(),
+      }).strict(),
     });
   }
 
@@ -120,26 +85,11 @@ export class CronDeleteCapabilityProvider extends CapabilityProvider {
     return this.plugin.isInitialized;
   }
 
-  public override async invoke(
+  protected override async invokeImpl(
     input: unknown,
     _context?: CapabilityContext,
   ): Promise<CapabilityResult> {
-    if (!isObjectRecord(input)) {
-      return {
-        ok: false,
-        error: "cron.delete expects an object input.",
-      };
-    }
-
-    const id = input.id;
-
-    if (typeof id !== "string" || id.trim().length === 0) {
-      return {
-        ok: false,
-        error: "id must be a non-empty string.",
-      };
-    }
-
+    const { id } = cronDeleteInputSchema.parse(input);
     this.plugin.deleteCron(id);
 
     return {
@@ -155,21 +105,13 @@ export class CronDeleteCapabilityProvider extends CapabilityProvider {
 export class CronListCapabilityProvider extends CapabilityProvider {
   constructor(private readonly plugin: CronPluginLike) {
     super({
-      id: "cron.list",
       description: "List all active cron jobs.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["cron", "schedule", "read"],
-      input: {
-        type: "object",
-        properties: {},
-        required: [],
-        additionalProperties: false,
-      },
-      output: {
-        type: "array",
-        description: "Active cron jobs.",
-      },
+      namespaces: ["cron"],
+      signature: "list",
+      inputSchema: emptyObjectSchema,
+      outputSchema: z.array(cronListItemSchema).describe("Active cron jobs."),
     });
   }
 
@@ -177,7 +119,7 @@ export class CronListCapabilityProvider extends CapabilityProvider {
     return this.plugin.isInitialized;
   }
 
-  public override async invoke(
+  protected override async invokeImpl(
     _input: unknown,
     _context?: CapabilityContext,
   ): Promise<CapabilityResult> {

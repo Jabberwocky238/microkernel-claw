@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@openintern3/plugin-agent": "file:../agent",
     "@wecom/aibot-node-sdk": "^1.0.2"
   }
 }

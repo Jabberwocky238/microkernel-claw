@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   CapabilityProvider,
   type CapabilityContext,
@@ -8,36 +9,25 @@ interface EchoPingPluginLike {
   readonly name: string;
   readonly version: string;
   readonly isInitialized: boolean;
-  ping(args: unknown[]): string;
+  ping(args: string[]): string;
 }
+
+const echoPingInputSchema = z.object({
+  args: z.array(z.string()).describe("Arguments forwarded to echo.ping."),
+}).strict();
+
+const echoPingOutputSchema = z.string().describe("The ping result.");
 
 export class EchoPingCapabilityProvider extends CapabilityProvider {
   constructor(private readonly plugin: EchoPingPluginLike) {
     super({
-      id: "echo.ping",
       description: "Log any provided arguments and return pong.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["echo", "ping"],
-      input: {
-        type: "object",
-        properties: {
-          args: {
-            type: "array",
-            description: "Arguments forwarded to echo.ping.",
-            items: {
-              type: "string",
-              description: "A single echo argument.",
-            },
-          },
-        },
-        required: ["args"],
-        additionalProperties: false,
-      },
-      output: {
-        type: "string",
-        description: "The ping result.",
-      },
+      namespaces: ["echo"],
+      signature: "ping",
+      inputSchema: echoPingInputSchema,
+      outputSchema: echoPingOutputSchema,
     });
   }
 
@@ -45,17 +35,11 @@ export class EchoPingCapabilityProvider extends CapabilityProvider {
     return this.plugin.isInitialized;
   }
 
-  public override async invoke(
+  protected override async invokeImpl(
     input: unknown,
     _context?: CapabilityContext,
   ): Promise<CapabilityResult> {
-    const args =
-      typeof input === "object" &&
-      input !== null &&
-      "args" in input &&
-      Array.isArray((input as { args?: unknown }).args)
-        ? (input as { args: unknown[] }).args
-        : [];
+    const { args } = echoPingInputSchema.parse(input);
 
     return {
       ok: true,

@@ -9,7 +9,9 @@
       "@openintern/kernel": ["src/kernel/index.ts"],
       "@openintern/kernel/*": ["src/kernel/*.ts"],
       "@openintern/service": ["src/service/index.ts"],
-      "@openintern/service/*": ["src/service/*.ts"]
+      "@openintern/service/*": ["src/service/*.ts"],
+      "@openintern3/plugin-agent": ["plugins/agent/src/index.ts"],
+      "@openintern3/plugin-agent/*": ["plugins/agent/src/*.ts"]
     },
     "strict": true,
     "lib": ["ES2020"],
@@ -27,4 +29,3 @@
     "plugins/wecom"
   ]
 }
-

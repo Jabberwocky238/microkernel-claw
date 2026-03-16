@@ -4,11 +4,17 @@ import {
   type CapabilityDescriptor,
   type CapabilityResult,
 } from "@openintern/kernel/capability";
+import {
+  channelPullMessagesInputSchema,
+  channelPullMessagesOutputSchema,
+  channelSendMessageInputSchema,
+  channelSendMessageOutputSchema,
+  channelStartOutputSchema,
+  channelStatusOutputSchema,
+  channelStopOutputSchema,
+  emptyObjectSchema,
+} from "@openintern3/plugin-agent/channel-capability-schemas";
 import type { WecomEngine } from "./engine.js";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 interface WecomPluginLike {
   readonly name: string;
@@ -30,22 +36,20 @@ abstract class WecomCapabilityProvider extends CapabilityProvider {
 export class WecomStartCapabilityProvider extends WecomCapabilityProvider {
   constructor(plugin: WecomPluginLike) {
     super({
-      id: "wecom.start",
       description: "Start the WeCom WebSocket client.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["wecom", "channel", "control"],
-      input: { type: "object", properties: {}, required: [], additionalProperties: false },
-      output: {
-        type: "object",
-        properties: { started: { type: "boolean" } },
-        required: ["started"],
-        additionalProperties: false,
-      },
+      namespaces: ["wecom"],
+      signature: "start",
+      inputSchema: emptyObjectSchema,
+      outputSchema: channelStartOutputSchema,
     }, plugin);
   }
 
-  public override async invoke(): Promise<CapabilityResult> {
+  protected override async invokeImpl(
+    _input: unknown,
+    _context?: CapabilityContext,
+  ): Promise<CapabilityResult> {
     try {
       await this.plugin.inner().start();
       return { ok: true, value: { started: true } };
@@ -58,22 +62,17 @@ export class WecomStartCapabilityProvider extends WecomCapabilityProvider {
 export class WecomStopCapabilityProvider extends WecomCapabilityProvider {
   constructor(plugin: WecomPluginLike) {
     super({
-      id: "wecom.stop",
       description: "Stop the WeCom WebSocket client.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["wecom", "channel", "control"],
-      input: { type: "object", properties: {}, required: [], additionalProperties: false },
-      output: {
-        type: "object",
-        properties: { stopped: { type: "boolean" } },
-        required: ["stopped"],
-        additionalProperties: false,
-      },
+      namespaces: ["wecom"],
+      signature: "stop",
+      inputSchema: emptyObjectSchema,
+      outputSchema: channelStopOutputSchema,
     }, plugin);
   }
 
-  public override async invoke(): Promise<CapabilityResult> {
+  protected override async invokeImpl(): Promise<CapabilityResult> {
     try {
       await this.plugin.inner().stop();
       return { ok: true, value: { stopped: true } };
@@ -86,27 +85,17 @@ export class WecomStopCapabilityProvider extends WecomCapabilityProvider {
 export class WecomStatusCapabilityProvider extends WecomCapabilityProvider {
   constructor(plugin: WecomPluginLike) {
     super({
-      id: "channel.status",
       description: "Get current channel plugin status.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["wecom", "channel", "read"],
-      input: { type: "object", properties: {}, required: [], additionalProperties: false },
-      output: {
-        type: "object",
-        properties: {
-          channel: { type: "string" },
-          enabled: { type: "boolean" },
-          started: { type: "boolean" },
-          queueSize: { type: "integer" },
-        },
-        required: ["channel", "enabled", "started", "queueSize"],
-        additionalProperties: true,
-      },
+      namespaces: ["wecom"],
+      signature: "status",
+      inputSchema: emptyObjectSchema,
+      outputSchema: channelStatusOutputSchema,
     }, plugin);
   }
 
-  public override async invoke(): Promise<CapabilityResult> {
+  protected override async invokeImpl(): Promise<CapabilityResult> {
     return { ok: true, value: { channel: this.plugin.name, ...this.plugin.inner().status() } };
   }
 }
@@ -114,40 +103,21 @@ export class WecomStatusCapabilityProvider extends WecomCapabilityProvider {
 export class WecomSendMessageCapabilityProvider extends WecomCapabilityProvider {
   constructor(plugin: WecomPluginLike) {
     super({
-      id: "channel.send_message",
       description: "Send a text message to a channel.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["wecom", "channel", "write"],
-      input: {
-        type: "object",
-        properties: {
-          to: { type: "string" },
-          text: { type: "string" },
-        },
-        required: ["to", "text"],
-        additionalProperties: false,
-      },
-      output: {
-        type: "object",
-        properties: {
-          channel: { type: "string" },
-          to: { type: "string" },
-          sent: { type: "boolean" },
-        },
-        required: ["channel", "to", "sent"],
-        additionalProperties: false,
-      },
+      namespaces: ["channel", "wecom"],
+      signature: "send_message",
+      inputSchema: channelSendMessageInputSchema,
+      outputSchema: channelSendMessageOutputSchema,
     }, plugin);
   }
 
-  public override async invoke(input: unknown): Promise<CapabilityResult> {
-    if (!isRecord(input) || typeof input.to !== "string" || typeof input.text !== "string") {
-      return { ok: false, error: "to and text are required." };
-    }
+  protected override async invokeImpl(input: unknown): Promise<CapabilityResult> {
+    const { to, text } = channelSendMessageInputSchema.parse(input);
 
     try {
-      const result = await this.plugin.inner().sendMessage(input.to, input.text);
+      const result = await this.plugin.inner().sendMessage(to, text);
       return { ok: true, value: { channel: this.plugin.name, ...result } };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -158,45 +128,19 @@ export class WecomSendMessageCapabilityProvider extends WecomCapabilityProvider 
 export class WecomPullMessagesCapabilityProvider extends WecomCapabilityProvider {
   constructor(plugin: WecomPluginLike) {
     super({
-      id: "channel.pull_messages",
       description: "Pull buffered inbound channel messages.",
       pluginName: plugin.name,
       version: plugin.version,
-      tags: ["wecom", "channel", "read"],
-      input: {
-        type: "object",
-        properties: {
-          limit: { type: "integer" },
-        },
-        required: [],
-        additionalProperties: false,
-      },
-      output: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            channel: { type: "string" },
-            id: { type: "string" },
-            senderId: { type: "string" },
-            chatId: { type: "string" },
-            content: { type: "string" },
-            timestamp: { type: "string" },
-            media: { type: "array", items: { type: "string" } },
-            metadata: { type: "object", properties: {}, additionalProperties: true },
-          },
-          required: ["channel", "id", "senderId", "chatId", "content", "timestamp", "media", "metadata"],
-          additionalProperties: false,
-        },
-      },
+      namespaces: ["channel", "wecom"],
+      signature: "pull_messages",
+      inputSchema: channelPullMessagesInputSchema,
+      outputSchema: channelPullMessagesOutputSchema,
     }, plugin);
   }
 
-  public override async invoke(input: unknown): Promise<CapabilityResult> {
-    const limit =
-      isRecord(input) && typeof input.limit === "number" && Number.isInteger(input.limit)
-        ? input.limit
-        : 50;
+  protected override async invokeImpl(input: unknown): Promise<CapabilityResult> {
+    const { limit = 50 } = channelPullMessagesInputSchema.parse(input);
+
     return {
       ok: true,
       value: this.plugin.inner().pullMessages(limit).map((message) => ({

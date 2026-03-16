@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   CapabilityProvider,
   type CapabilityDescriptor,
@@ -38,6 +39,51 @@ interface TerminalsPluginLike {
   cmd(command: string, options?: TerminalCommandOptions): PromiseLike<TerminalCommandResult>;
 }
 
+const emptyObjectSchema = z.object({}).strict();
+const terminalEnvSchema = z.record(z.string(), z.string());
+const terminalCommandInputSchema = z.object({
+  command: z.string().trim().min(1),
+  description: z.string().optional(),
+  cwd: z.string().optional(),
+  shell: z.string().optional(),
+  env: terminalEnvSchema.optional(),
+}).strict();
+const terminalProcessSummarySchema = z.object({
+  pid: z.int(),
+  command: z.string(),
+  description: z.string(),
+  cwd: z.string(),
+  status: z.string(),
+  startedAt: z.string(),
+  runtimeMs: z.int(),
+  exitCode: z.int().nullable().optional(),
+  signal: z.string().nullable().optional(),
+}).strict();
+const terminalTailInputSchema = z.object({
+  pid: z.int(),
+  lines: z.int().optional(),
+  stream: z.enum(["stdout", "stderr", "combine"]).optional(),
+}).strict();
+const terminalOutputLineSchema = z.object({
+  source: z.enum(["stdout", "stderr", "combine"]),
+  content: z.string(),
+}).strict();
+const terminalKillInputSchema = z.object({
+  pid: z.int(),
+}).strict();
+const terminalKillOutputSchema = z.object({
+  pid: z.int(),
+  status: z.literal("killed"),
+}).strict();
+const terminalExecOutputSchema = z.object({
+  command: z.string(),
+  cwd: z.string(),
+  exitCode: z.int().nullable().optional(),
+  signal: z.string().nullable().optional(),
+  stdout: z.string(),
+  stderr: z.string(),
+}).strict();
+
 abstract class TerminalsCapabilityProvider extends CapabilityProvider {
   constructor(
     descriptor: CapabilityDescriptor,
@@ -55,54 +101,32 @@ export class TerminalStartCapabilityProvider extends TerminalsCapabilityProvider
   constructor(plugin: TerminalsPluginLike) {
     super(
       {
-        id: "terminals.start",
         description: "Start a child process for a shell command and return its pid.",
         pluginName: plugin.name,
         version: plugin.version,
-        tags: ["terminals", "process", "start"],
-        input: {
-          type: "object",
-          properties: {
-            command: { type: "string" },
-            description: { type: "string" },
-            cwd: { type: "string" },
-            shell: { type: "string" },
-            env: {
-              type: "object",
-              properties: {},
-              additionalProperties: true,
-            },
-          },
-          required: ["command"],
-          additionalProperties: false,
-        },
-        output: {
-          type: "object",
-          properties: {
-            pid: { type: "integer" },
-            description: { type: "string" },
-          },
-          required: ["pid", "description"],
-          additionalProperties: false,
-        },
+        namespaces: ["terminals"],
+        signature: "start",
+        inputSchema: terminalCommandInputSchema,
+        outputSchema: z.object({
+          pid: z.int(),
+          description: z.string(),
+        }).strict(),
       },
       plugin,
     );
   }
 
-  public override async invoke(input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
-    if (!isRecord(input) || typeof input.command !== "string" || !input.command.trim()) {
-      return { ok: false, error: "command must be a non-empty string." };
-    }
+  protected override async invokeImpl(input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
+    const parsed = terminalCommandInputSchema.parse(input);
 
     try {
       return {
         ok: true,
-        value: this.plugin.start(input.command, {
-          description: typeof input.description === "string" ? input.description : undefined,
-          cwd: typeof input.cwd === "string" ? input.cwd : undefined,
-          shell: typeof input.shell === "string" ? input.shell : undefined,
-          env: toStringRecord(input.env),
+        value: this.plugin.start(parsed.command, {
+          description: parsed.description,
+          cwd: parsed.cwd,
+          shell: parsed.shell,
+          env: toStringRecord(parsed.env),
         }),
       };
     } catch (error) {
@@ -115,36 +139,19 @@ export class TerminalListCapabilityProvider extends TerminalsCapabilityProvider 
   constructor(plugin: TerminalsPluginLike) {
     super(
       {
-        id: "terminals.list",
         description: "List all tracked child processes with description, runtime and status.",
         pluginName: plugin.name,
         version: plugin.version,
-        tags: ["terminals", "process", "list"],
-        output: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              pid: { type: "integer" },
-              command: { type: "string" },
-              description: { type: "string" },
-              cwd: { type: "string" },
-              status: { type: "string" },
-              startedAt: { type: "string" },
-              runtimeMs: { type: "integer" },
-              exitCode: { type: "integer" },
-              signal: { type: "string" },
-            },
-            required: ["pid", "command", "description", "cwd", "status", "startedAt", "runtimeMs"],
-            additionalProperties: false,
-          },
-        },
+        namespaces: ["terminals"],
+        signature: "list",
+        inputSchema: emptyObjectSchema,
+        outputSchema: z.array(terminalProcessSummarySchema),
       },
       plugin,
     );
   }
 
-  public override async invoke(_input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
+  protected override async invokeImpl(_input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
     return { ok: true, value: this.plugin.list() };
   }
 }
@@ -153,57 +160,25 @@ export class TerminalTailCapabilityProvider extends TerminalsCapabilityProvider 
   constructor(plugin: TerminalsPluginLike) {
     super(
       {
-        id: "terminals.tail",
         description: "Get the last n output lines of a tracked child process.",
         pluginName: plugin.name,
         version: plugin.version,
-        tags: ["terminals", "process", "tail"],
-        input: {
-          type: "object",
-          properties: {
-            pid: { type: "integer" },
-            lines: { type: "integer" },
-            stream: { type: "string", enum: ["stdout", "stderr", "combine"] },
-          },
-          required: ["pid"],
-          additionalProperties: false,
-        },
-        output: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              source: { type: "string", enum: ["stdout", "stderr", "combine"] },
-              content: { type: "string" },
-            },
-            required: ["source", "content"],
-            additionalProperties: false,
-          },
-        },
+        namespaces: ["terminals"],
+        signature: "tail",
+        inputSchema: terminalTailInputSchema,
+        outputSchema: z.array(terminalOutputLineSchema),
       },
       plugin,
     );
   }
 
-  public override async invoke(input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
-    if (!isRecord(input) || !Number.isInteger(input.pid)) {
-      return { ok: false, error: "pid must be an integer." };
-    }
-
-    const pid = input.pid as number;
+  protected override async invokeImpl(input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
+    const { pid, lines, stream } = terminalTailInputSchema.parse(input);
 
     try {
-      const stream =
-        input.stream === "stdout" || input.stream === "stderr" || input.stream === "combine"
-          ? input.stream
-          : undefined;
       return {
         ok: true,
-        value: this.plugin.tail(
-          pid,
-          Number.isInteger(input.lines) ? (input.lines as number) : undefined,
-          stream,
-        ),
+        value: await this.plugin.tail(pid, lines, stream),
       };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -215,39 +190,20 @@ export class TerminalKillCapabilityProvider extends TerminalsCapabilityProvider 
   constructor(plugin: TerminalsPluginLike) {
     super(
       {
-        id: "terminals.kill",
         description: "Kill a tracked child process by pid.",
         pluginName: plugin.name,
         version: plugin.version,
-        tags: ["terminals", "process", "kill"],
-        input: {
-          type: "object",
-          properties: {
-            pid: { type: "integer" },
-          },
-          required: ["pid"],
-          additionalProperties: false,
-        },
-        output: {
-          type: "object",
-          properties: {
-            pid: { type: "integer" },
-            status: { type: "string", enum: ["killed"] },
-          },
-          required: ["pid", "status"],
-          additionalProperties: false,
-        },
+        namespaces: ["terminals"],
+        signature: "kill",
+        inputSchema: terminalKillInputSchema,
+        outputSchema: terminalKillOutputSchema,
       },
       plugin,
     );
   }
 
-  public override async invoke(input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
-    if (!isRecord(input) || !Number.isInteger(input.pid)) {
-      return { ok: false, error: "pid must be an integer." };
-    }
-
-    const pid = input.pid as number;
+  protected override async invokeImpl(input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
+    const { pid } = terminalKillInputSchema.parse(input);
 
     try {
       return { ok: true, value: this.plugin.kill(pid) };
@@ -261,56 +217,27 @@ export class TerminalExecCapabilityProvider extends TerminalsCapabilityProvider 
   constructor(plugin: TerminalsPluginLike) {
     super(
       {
-        id: "terminals.exec",
         description: "Execute a shell command and await the completed stdout/stderr result.",
         pluginName: plugin.name,
         version: plugin.version,
-        tags: ["terminals", "command", "exec"],
-        input: {
-          type: "object",
-          properties: {
-            command: { type: "string" },
-            description: { type: "string" },
-            cwd: { type: "string" },
-            shell: { type: "string" },
-            env: {
-              type: "object",
-              properties: {},
-              additionalProperties: true,
-            },
-          },
-          required: ["command"],
-          additionalProperties: false,
-        },
-        output: {
-          type: "object",
-          properties: {
-            command: { type: "string" },
-            cwd: { type: "string" },
-            exitCode: { type: "integer" },
-            signal: { type: "string" },
-            stdout: { type: "string" },
-            stderr: { type: "string" },
-          },
-          required: ["command", "cwd", "stdout", "stderr"],
-          additionalProperties: false,
-        },
+        namespaces: ["terminals"],
+        signature: "exec",
+        inputSchema: terminalCommandInputSchema,
+        outputSchema: terminalExecOutputSchema,
       },
       plugin,
     );
   }
 
-  public override async invoke(input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
-    if (!isRecord(input) || typeof input.command !== "string" || !input.command.trim()) {
-      return { ok: false, error: "command must be a non-empty string." };
-    }
+  protected override async invokeImpl(input: unknown, _context?: CapabilityContext): Promise<CapabilityResult> {
+    const parsed = terminalCommandInputSchema.parse(input);
 
     try {
-      const result = await this.plugin.cmd(input.command, {
-        description: typeof input.description === "string" ? input.description : undefined,
-        cwd: typeof input.cwd === "string" ? input.cwd : undefined,
-        shell: typeof input.shell === "string" ? input.shell : undefined,
-        env: toStringRecord(input.env),
+      const result = await this.plugin.cmd(parsed.command, {
+        description: parsed.description,
+        cwd: parsed.cwd,
+        shell: parsed.shell,
+        env: toStringRecord(parsed.env),
       });
       return { ok: true, value: result };
     } catch (error) {

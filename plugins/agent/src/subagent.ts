@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   CapabilityProvider,
   type CapabilityDescriptor,
@@ -23,9 +24,18 @@ export type {
   SubagentTaskRecord,
 } from "./types.js";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const agentSpawnInputSchema = z.object({
+  task: z.string().trim().min(1).describe("Task for the background subagent."),
+  role: z.string().optional().describe("Optional role hint for the subagent."),
+}).strict();
+
+const agentSpawnOutputSchema = z.object({
+  taskId: z.string(),
+  sessionId: z.string(),
+  parentSessionId: z.string(),
+  status: z.enum(["queued", "running", "completed", "failed"]),
+  allowedCapabilities: z.array(z.string()),
+}).strict();
 
 export class SubagentManager {
   private readonly tasks = new Map<string, SubagentTaskRecord>();
@@ -188,62 +198,23 @@ export class AgentSpawnCapabilityProvider extends AgentSubagentCapabilityProvide
   ) {
     super(
       {
-        id: "agent.spawn",
         description: "Spawn a background subagent for a delegated task and callback into the parent session when it finishes.",
         pluginName: plugin.name,
         version: plugin.version,
-        tags: ["agent", "subagent", "spawn"],
-        input: {
-          type: "object",
-          properties: {
-            task: {
-              type: "string",
-              description: "Task for the background subagent.",
-            },
-            role: {
-              type: "string",
-              description: "Optional role hint for the subagent.",
-            },
-          },
-          required: ["task"],
-          additionalProperties: false,
-        },
-        output: {
-          type: "object",
-          properties: {
-            taskId: { type: "string" },
-            sessionId: { type: "string" },
-            parentSessionId: { type: "string" },
-            status: {
-              type: "string",
-              enum: ["queued", "running", "completed", "failed"],
-            },
-            allowedCapabilities: {
-              type: "array",
-              items: {
-                type: "string",
-              },
-            },
-          },
-          required: ["taskId", "sessionId", "parentSessionId", "status", "allowedCapabilities"],
-          additionalProperties: false,
-        },
+        namespaces: ["agent"],
+        signature: "spawn",
+        inputSchema: agentSpawnInputSchema,
+        outputSchema: agentSpawnOutputSchema,
       },
       plugin,
     );
   }
 
-  public override async invoke(
+  protected override async invokeImpl(
     input: unknown,
     context?: CapabilityContext,
   ): Promise<CapabilityResult> {
-    if (!isRecord(input) || typeof input.task !== "string" || input.task.trim().length === 0) {
-      return {
-        ok: false,
-        error: "task must be a non-empty string.",
-      };
-    }
-
+    const { task, role } = agentSpawnInputSchema.parse(input);
     const sessionId = this.resolveSessionId(context);
 
     if (!sessionId) {
@@ -255,8 +226,8 @@ export class AgentSpawnCapabilityProvider extends AgentSubagentCapabilityProvide
 
     try {
       const record = await this.manager.spawn({
-        task: input.task,
-        role: typeof input.role === "string" ? input.role : undefined,
+        task,
+        role,
         sessionId,
         callbackSummary: true,
       });
@@ -290,3 +261,7 @@ export class AgentSpawnCapabilityProvider extends AgentSubagentCapabilityProvide
     return sessionId.length > 0 ? sessionId : null;
   }
 }
+
+
+
+

@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./channel-capability-schemas": "./src/channel-capability-schemas.ts"
+  },
   "dependencies": {
     "@openai/agents": "^0.7.1",
     "zod": "^4.3.6"

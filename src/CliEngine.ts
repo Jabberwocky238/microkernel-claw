@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { inspect } from "node:util";
 
-import type { CapabilityDescriptor } from "./kernel/capability.js";
+import { capabilityPrimaryRouteKey, type CapabilityDescriptor } from "./kernel/capability.js";
 import type { Plugin } from "./kernel/plugin.js";
 
 type CliMode = "cliDebugger" | "cliAgent";
@@ -320,9 +320,10 @@ export class CliEngine {
         capabilities: plugin
           .capabilities()
           .map((capability: { descriptor: CapabilityDescriptor }) => ({
-            id: capability.descriptor.id,
+            routeKey: capabilityPrimaryRouteKey(capability.descriptor),
+            namespaces: capability.descriptor.namespaces,
+            signature: capability.descriptor.signature,
             description: capability.descriptor.description,
-            tags: capability.descriptor.tags ?? [],
           })),
       },
       null,

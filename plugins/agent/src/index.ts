@@ -1,4 +1,6 @@
 import {
+  capabilityPrimaryRouteKey,
+  capabilitySchemaToJsonSchema,
   CapabilityProvider,
   EventSubTarget,
   type PluginEvent,
@@ -511,29 +513,25 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       ? isolation.allowedCapabilityIds
       : [...DEFAULT_AGENT_ALLOWED_CAPABILITIES];
     const visibleDescriptors = descriptors.filter(
-      (descriptor) => allowedCapabilityIds.includes(descriptor.id),
+      (descriptor) => allowedCapabilityIds.includes(capabilityPrimaryRouteKey(descriptor)),
     );
     const dedupedDescriptors = [...new Map(
-      visibleDescriptors.map((descriptor) => [descriptor.id, descriptor]),
+      visibleDescriptors.map((descriptor) => [capabilityPrimaryRouteKey(descriptor), descriptor]),
     ).values()];
 
     return dedupedDescriptors.map((descriptor) => {
-      const toolName = descriptor.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const routeKey = capabilityPrimaryRouteKey(descriptor);
+      const toolName = routeKey.replace(/[^a-zA-Z0-9_-]/g, "_");
 
       return {
-        capabilityId: descriptor.id,
+        capabilityId: routeKey,
         toolName,
         definition: {
           type: "function",
           function: {
             name: toolName,
             description: descriptor.description,
-            parameters: descriptor.input ?? {
-              type: "object",
-              properties: {},
-              required: [],
-              additionalProperties: true,
-            },
+            parameters: capabilitySchemaToJsonSchema(descriptor.inputSchema, "input"),
           },
         },
       };
@@ -765,4 +763,11 @@ export function buildPromptMessages(request: AgentPromptRequest): AgentMessage[]
 
   return messages;
 }
+
+
+
+
+
+
+
 

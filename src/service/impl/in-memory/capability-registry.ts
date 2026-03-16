@@ -1,21 +1,21 @@
 import type { CapabilityDescriptor, CapabilityProvider } from "../../../kernel/capability.js";
 import { CapabilityRegistryServiceProvider } from "../../capability-registry.js";
 
-function matchesAllTags(
+function matchesAllNamespaces(
   descriptor: CapabilityDescriptor,
-  tags: string[] | undefined,
+  namespaces: string[] | undefined,
 ): boolean {
-  if (!tags || tags.length === 0) {
+  if (!namespaces || namespaces.length === 0) {
     return true;
   }
 
-  const descriptorTags = new Set(descriptor.tags ?? []);
-
-  return tags.every((tag) => descriptorTags.has(tag));
+  const descriptorNamespaces = new Set(descriptor.namespaces);
+  return namespaces.every((namespace) => descriptorNamespaces.has(namespace));
 }
 
 export class InMemoryCapabilityRegistryService extends CapabilityRegistryServiceProvider {
-  private readonly providers = new Map<string, CapabilityProvider[]>();
+  private readonly providersByRouteKey = new Map<string, Set<CapabilityProvider>>();
+  private readonly providers = new Set<CapabilityProvider>();
 
   constructor() {
     super({
@@ -26,44 +26,61 @@ export class InMemoryCapabilityRegistryService extends CapabilityRegistryService
   }
 
   public override register(provider: CapabilityProvider): void {
-    const existing = this.providers.get(provider.id) ?? [];
-
-    if (existing.some((item) => item === provider)) {
+    if (this.providers.has(provider)) {
       return;
     }
 
-    existing.push(provider);
-    this.providers.set(provider.id, existing);
+    this.providers.add(provider);
+
+    for (const routeKey of provider.routingKeys) {
+      const existing = this.providersByRouteKey.get(routeKey) ?? new Set<CapabilityProvider>();
+      existing.add(provider);
+      this.providersByRouteKey.set(routeKey, existing);
+    }
   }
 
-  public override unregister(capabilityId: string, pluginName?: string): void {
-    if (!pluginName) {
-      this.providers.delete(capabilityId);
-      return;
-    }
+  public override unregister(routeKey: string, pluginName?: string): void {
+    const matchedProviders = this.get(routeKey);
 
-    const existing = this.providers.get(capabilityId);
-    if (!existing) {
-      return;
-    }
+    for (const provider of matchedProviders) {
+      if (pluginName && provider.descriptor.pluginName !== pluginName) {
+        continue;
+      }
 
-    const filtered = existing.filter((provider) => provider.descriptor.pluginName !== pluginName);
-    if (filtered.length === 0) {
-      this.providers.delete(capabilityId);
-      return;
+      this.removeProvider(provider);
     }
-
-    this.providers.set(capabilityId, filtered);
   }
 
-  public override get(capabilityId: string): CapabilityProvider[] {
-    return [...(this.providers.get(capabilityId) ?? [])];
+  public override get(routeKey: string): CapabilityProvider[] {
+    return [...(this.providersByRouteKey.get(routeKey) ?? new Set<CapabilityProvider>())];
   }
 
-  public override list(tags?: string[]): CapabilityDescriptor[] {
-    return [...this.providers.values()]
-      .flat()
+  public override list(namespaces?: string[]): CapabilityDescriptor[] {
+    return [...this.providers]
       .map((provider) => provider.descriptor)
-      .filter((descriptor) => matchesAllTags(descriptor, tags));
+      .filter((descriptor) => matchesAllNamespaces(descriptor, namespaces));
+  }
+
+  private removeProvider(provider: CapabilityProvider): void {
+    if (!this.providers.delete(provider)) {
+      return;
+    }
+
+    for (const routeKey of provider.routingKeys) {
+      const existing = this.providersByRouteKey.get(routeKey);
+
+      if (!existing) {
+        continue;
+      }
+
+      existing.delete(provider);
+
+      if (existing.size === 0) {
+        this.providersByRouteKey.delete(routeKey);
+        continue;
+      }
+
+      this.providersByRouteKey.set(routeKey, existing);
+    }
   }
 }
