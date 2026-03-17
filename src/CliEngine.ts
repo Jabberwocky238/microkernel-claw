@@ -2,6 +2,12 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { inspect } from "node:util";
 
+import {
+  OpenInternConfigPath,
+  defaultConfiguration,
+  ensureConfiguration,
+  loadConfiguration,
+} from "./configuration.js";
 import { capabilityPrimaryRouteKey, type CapabilityDescriptor } from "./kernel/capability.js";
 import type { Plugin } from "./kernel/plugin.js";
 
@@ -91,6 +97,10 @@ export class CliEngine {
 
     if (tokens[0] === "/mode") {
       return this.switchMode(tokens[1]);
+    }
+
+    if (tokens[0] === "/config") {
+      return this.executeConfigCommand(tokens);
     }
 
     if (
@@ -236,6 +246,8 @@ export class CliEngine {
         "Type any message to chat with the agent.",
         "/reset - reset current agent session",
         "/debug - switch to cliDebugger",
+        "/config show - print .openintern3/config.json",
+        "/config path - show config file path",
         "/plugin ... - run debugger commands without leaving agent mode",
       ].join("\n");
     }
@@ -245,9 +257,47 @@ export class CliEngine {
       "/plugin list",
       "/plugin get <name>",
       "/plugin <name> <method> <...args>",
+      "/config show",
+      "/config init",
+      "/config presets",
       "/agent - switch to cliAgent",
       "/reset - reset current agent session",
     ].join("\n");
+  }
+
+  private async executeConfigCommand(tokens: string[]): Promise<string> {
+    if (tokens[1] === "path") {
+      return OpenInternConfigPath;
+    }
+
+    if (tokens[1] === "init") {
+      const configuration = defaultConfiguration();
+      await ensureConfiguration();
+      return [
+        `Config ready: ${OpenInternConfigPath}`,
+        `plugins: ${configuration.plugins.length}`,
+      ].join("\n");
+    }
+
+    if (tokens[1] === "show" || tokens.length === 1) {
+      const configuration = await ensureConfiguration();
+      return JSON.stringify(configuration, null, 2);
+    }
+
+    if (tokens[1] === "presets") {
+      const configuration = await loadConfiguration(OpenInternConfigPath);
+
+      if (configuration.plugins.length === 0) {
+        return "No plugin presets configured.";
+      }
+
+      return configuration.plugins
+        .map((preset) =>
+          `${preset.autoStart ? "[x]" : "[ ]"} ${preset.name}@${preset.version} ${preset.importPath}`)
+        .join("\n");
+    }
+
+    return "Usage: /config [show|init|path|presets]";
   }
 
   private extractAgentFinalContent(result: unknown): string | null {

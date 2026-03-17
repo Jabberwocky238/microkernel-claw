@@ -29,7 +29,7 @@ import {
 } from "./subagent.js";
 import { OpenAICompatibleProvider } from "./providers/openai-compatible-provider.js";
 
-const DEFAULT_MAX_TOOL_ITERATIONS = 8;
+const DEFAULT_MAX_TOOL_ITERATIONS = 64;
 const SESSION_STORE_STATE_KEY = "sessionStore";
 const SUBAGENT_MANAGER_STATE_KEY = "subagentManager";
 

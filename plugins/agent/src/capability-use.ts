@@ -11,6 +11,7 @@ export const DEFAULT_AGENT_ALLOWED_CAPABILITIES = [
   "channel.status",
   "channel.send_message",
   "channel.pull_messages",
+  "apply_patch.apply",
   "agent.spawn",
 ] as const;
 

@@ -21,6 +21,7 @@
   "include": [
     "src",
     "plugins/agent",
+    "plugins/apply_patch",
     "plugins/cron",
     "plugins/echo",
     "plugins/feishu",

@@ -7,6 +7,10 @@ import dotenv from "dotenv";
 import { existsSync } from "node:fs";
 import { PluginLoader } from "./kernel/plugin-loader.js";
 import { Application } from "./application.js";
+import {
+  ensureConfiguration,
+  resolvePluginImportPath,
+} from "./configuration.js";
 
 if (existsSync(".env.dev")) {
   dotenv.config({ path: ".env.dev" });
@@ -16,17 +20,12 @@ if (existsSync(".env.dev")) {
 
 const application = new Application();
 await application.init();
+
 const pluginLoader = new PluginLoader();
-const pluginModulePaths = [
-  new URL("../plugins/echo/src/index.ts", import.meta.url).href,
-  new URL("../plugins/cron/src/index.ts", import.meta.url).href,
-  new URL("../plugins/agent/src/index.ts", import.meta.url).href,
-  new URL("../plugins/terminals/src/index.ts", import.meta.url).href,
-  // new URL("../plugins/feishu/src/index.ts", import.meta.url).href,
-  new URL("../plugins/whatsapp/src/index.ts", import.meta.url).href,
-  new URL("../plugins/wecom/src/index.ts", import.meta.url).href,
-  new URL("../plugins/telegram/src/index.ts", import.meta.url).href,
-];
+const configuration = await ensureConfiguration();
+const pluginModulePaths = configuration.plugins
+  .filter((preset) => preset.autoStart)
+  .map((preset) => resolvePluginImportPath(preset.importPath, import.meta.url));
 
 for (const pluginModulePath of pluginModulePaths) {
   const plugin = await pluginLoader.loadFromImport(pluginModulePath);
