@@ -7,6 +7,7 @@ import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, open, readFile } from "node:fs/promises";
 import path from "node:path";
 import { CapabilityProvider, Plugin } from "@openintern/kernel";
+import { assertSingleCommand } from "./check-parser.js";
 import {
   TerminalExecCapabilityProvider,
   TerminalKillCapabilityProvider,
@@ -79,6 +80,8 @@ export default class TerminalsPlugin extends Plugin {
     if (typeof command !== "string" || command.trim().length === 0) {
       throw new TypeError("command must be a non-empty string.");
     }
+
+    assertSingleCommand(command);
 
     const cwd = this.resolveCwd(options.cwd);
     const shell = this.resolveShell(options.shell);
@@ -180,6 +183,7 @@ export default class TerminalsPlugin extends Plugin {
       description: options.description?.trim() || command,
       cwd: options.cwd,
     });
+    assertSingleCommand(command);
     const started = this.start(command, options);
     const processRecord = this.getProcessByPid(started.pid);
     const execution = new TerminalCommandExecution(
@@ -569,3 +573,4 @@ export default class TerminalsPlugin extends Plugin {
   }
 
 }
+
