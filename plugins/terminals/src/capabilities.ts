@@ -97,11 +97,18 @@ abstract class TerminalsCapabilityProvider extends CapabilityProvider {
   }
 }
 
+const TerminalStartCapabilityProviderDescription = [
+  "Start a child process for one direct command and return its pid.",
+  "Do not pack long logic into one command string.",
+  "If the workflow needs multiple steps or a long shell snippet,",
+  "write a temporary .sh/.ps1 script first, then execute that script as the single command.",
+].join("");
+
 export class TerminalStartCapabilityProvider extends TerminalsCapabilityProvider {
   constructor(plugin: TerminalsPluginLike) {
     super(
       {
-        description: "Start a child process for a shell command and return its pid.",
+        description: TerminalStartCapabilityProviderDescription,
         pluginName: plugin.name,
         version: plugin.version,
         namespaces: ["terminals"],
@@ -213,11 +220,19 @@ export class TerminalKillCapabilityProvider extends TerminalsCapabilityProvider 
   }
 }
 
+const TerminalExecCapabilityProviderDescription = [
+  "Execute one direct command and await the completed stdout/stderr result.",
+  "Do not send long inline shell programs.",
+  "For multi-step logic, long bash snippets, or long PowerShell snippets,",
+  "write a temporary script file to temp directory / cache directory first,",
+  "and then execute that script file as the single command.",
+].join("");
+
 export class TerminalExecCapabilityProvider extends TerminalsCapabilityProvider {
   constructor(plugin: TerminalsPluginLike) {
     super(
       {
-        description: "Execute a shell command and await the completed stdout/stderr result.",
+        description: TerminalExecCapabilityProviderDescription,
         pluginName: plugin.name,
         version: plugin.version,
         namespaces: ["terminals"],
